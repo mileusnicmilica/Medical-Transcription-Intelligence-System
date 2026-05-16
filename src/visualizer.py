@@ -3,18 +3,50 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import numpy as np
+
+
 def plot_class_distribution(df, column='medical_specialty'):
-    """
-    Creates a bar plot of medical specialties to visualize imbalance.
-    Professional tip: Use this before and after applying SMOTE.
-    """
-    plt.figure(figsize=(12, 8))
-    sns.countplot(y=df[column], order=df[column].value_counts().index)
-    plt.title(f'Distribution of {column}')
-    plt.xlabel('Number of Samples')
-    plt.ylabel('Specialty')
+    counts = df[column].value_counts()
+
+    mean_val = counts.mean()
+    median_val = counts.median()
+
+    # coloring bars: below median  = red (not enough samples), above = blue
+    colors = ['#d9534f' if c < median_val else '#337ab7' for c in counts.values]
+
+    fig, ax = plt.subplots(figsize=(14, 10))
+    bars = ax.barh(counts.index, counts.values, color=colors)
+
+    # line for mean
+    ax.axvline(x=mean_val, color='orange', linestyle='--', linewidth=1.5, label=f'Mean: {mean_val:.0f}')
+    # line for median
+    ax.axvline(x=median_val, color='green', linestyle='--', linewidth=1.5, label=f'Median: {median_val:.0f}')
+
+    # values at the end of the bars
+    for bar, count in zip(bars, counts.values):
+        ax.text(count + 5, bar.get_y() + bar.get_height() / 2,
+                str(count), va='center', fontsize=8)
+
+    # legend
+    blue_patch = mpatches.Patch(color='#337ab7', label='Above median')
+    red_patch = mpatches.Patch(color='#d9534f', label='Below median (underrepresented)')
+    ax.legend(handles=[blue_patch, red_patch],
+              loc='lower right')
+    ax.axvline(x=mean_val, color='orange', linestyle='--', linewidth=1.5, label=f'Mean: {mean_val:.0f}')
+    ax.axvline(x=median_val, color='green', linestyle='--', linewidth=1.5, label=f'Median: {median_val:.0f}')
+
+    ax.set_xlabel('Number of Samples')
+    ax.set_ylabel('Specialty')
+    ax.set_title(f'Class Distribution — {column}\n'
+                 f'Mean: {mean_val:.0f} | Median: {median_val:.0f} | '
+                 f'Max/Min ratio: {counts.max() / counts.min():.1f}x imbalance')
+
     plt.tight_layout()
-    plt.show()
+    plt.savefig("data/class_distribution.png", dpi=150, bbox_inches='tight')
+    plt.close()
 
 
 def plot_wordcloud(df, specialty_name):

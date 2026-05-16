@@ -1,18 +1,19 @@
 # main.py
+import os
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.svm import LinearSVC
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import RandomOverSampler
 
-# Import your custom modules
 from src.data_loader import download_and_load_data, clean_medical_data
 from src.preprocessor import MedicalPreprocessor
 from src.visualizer import plot_class_distribution
-from src.balancing import balance_data
-from src.classifiers import train_baseline_svc
 from src.evaluator import evaluate_model
 from src.utils import save_artifacts
 
 def main():
-    # Initialize a dictionary to store all model results for final comparison
     all_results = {}
 
     # 1. LOAD & BASIC CLEAN
@@ -23,41 +24,63 @@ def main():
     plot_class_distribution(df)
 
     # 3. SPACY PREPROCESSING
-    processor = MedicalPreprocessor()
-    df = processor.preprocess_dataframe(df)
-    df.to_csv("data/cleaned_data_cache.csv", index=False)
-    print("Preprocessing saved to cache.")
+    cache_path = "data/cleaned_data_cache.csv"
 
-    # 4. BALANCING - SMOTE
-    X_balanced, y_balanced, tfidf = balance_data(df)
+    if os.path.exists(cache_path):
+        print("Loading from cache, skipping preprocessing...")
+        df = pd.read_csv(cache_path)
+    else:
+        processor = MedicalPreprocessor()
+        df = processor.preprocess_dataframe(df)
+        os.makedirs("data", exist_ok=True)
+        df.to_csv(cache_path, index=False)
+        print("Preprocessing saved to cache.")
 
-    # 5. TEST/TRAIN SPLIT
+    # 4. TRAIN/TEST SPLIT (before balancing!)
+    X = df['cleaned_transcription']  # name from preprocessor.py
+    y = df['medical_specialty']
+
     X_train, X_test, y_train, y_test = train_test_split(
-        X_balanced, y_balanced, test_size=0.2, random_state=42
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # 6. TRAINING BASELINE MODEL
-    model = train_baseline_svc(X_train, y_train)
+    # 5. PIPELINE: TF-IDF + SMOTE + LinearSVC
+    # SMOTE applies only on training folds under cross-validation
+    pipeline = Pipeline([
+        ('tfidf', TfidfVectorizer()),
+        ('smote', RandomOverSampler(random_state=42)),  # or SMOTE?
+        ('clf', LinearSVC(random_state=42))
+    ])
 
-    # 8. SAVING THE RESULT (The English version)
-    save_artifacts(model, tfidf, name="linear_svc_v1")
+    # 6. CROSS-VALIDATION (balancing is part of this process)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_results = cross_validate(
+        pipeline, X_train, y_train, cv=cv,
+        scoring=['f1_weighted', 'balanced_accuracy']
+    )
 
-    # 7. FINAL RESULTS & EVALUATION
-    predictions = model.predict(X_test)
+    print("\n=== CROSS-VALIDATION RESULTS ===")
+    print(f"Weighted F1:        {cv_results['test_f1_weighted'].mean():.4f} ± {cv_results['test_f1_weighted'].std():.4f}")
+    print(f"Balanced Accuracy:  {cv_results['test_balanced_accuracy'].mean():.4f} ± {cv_results['test_balanced_accuracy'].std():.4f}")
 
+    # 7. FINAL FIT - TRAIN SET and EVALUATION - TEST SET
+    pipeline.fit(X_train, y_train)
+    predictions = pipeline.predict(X_test)
 
-    # function with two outputs
-    weighted_f1, accuracy = evaluate_model(y_test, predictions)
+    weighted_f1, balanced_acc = evaluate_model(y_test, predictions)
 
-    # Saving results for the final table
+    # 8. SAVE
+    save_artifacts(pipeline, name="linear_svc_v1")
+
+    # 9. FINAL COMPARISON TABLE
     all_results['TF-IDF + LinearSVC'] = {
         'weighted_f1': weighted_f1,
-        'accuracy': accuracy
+        'balanced_accuracy': balanced_acc
     }
-    print("\n=== FINAL COMPARISON ===")
+
+    print("\n=== FINAL TEST SET RESULTS ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
-
 
 if __name__ == "__main__":
     main()

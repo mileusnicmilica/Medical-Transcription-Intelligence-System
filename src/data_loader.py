@@ -24,31 +24,27 @@ def download_and_load_data():
 
     return df
 
+
 def clean_medical_data(df):
     """
-    Performs initial data cleaning:
-    1. Removes records with missing transcriptions.
-    2. Filters out medical specialties with low sample counts to ensure
-       statistical significance during training/evaluation.
+        Performs initial data cleaning:
+        1. Removes records with missing transcriptions.
+        2. Filters out medical specialties with low sample counts to ensure
+           statistical significance during training/evaluation.
 
-    Args:
-        df (pd.DataFrame): The raw medical transcription dataframe.
+        Args:
+            df (pd.DataFrame): The raw medical transcription dataframe.
 
-    Returns:
-        pd.DataFrame: Cleaned dataframe ready for preprocessing.
-    """
-    # Drop rows where 'transcription' is NaN because its critical for NLP tasks
+        Returns:
+            pd.DataFrame: Cleaned dataframe ready for preprocessing.
+        """
     df = df.dropna(subset=['transcription'])
 
-    # Calculate frequency of each medical specialty
-    counts = df['medical_specialty'].value_counts()
+    df['medical_specialty'] = df['medical_specialty'].str.strip() #some specialties have values such as " Neurology" so model cannot learn properly
 
-    # Keep only categories with at least 20 samples
-    # This addresses extreme class imbalance mentioned in the project proposal
+    counts = df['medical_specialty'].value_counts()
     valid_categories = counts[counts >= 20].index
     df = df[df['medical_specialty'].isin(valid_categories)]
-
-    # Optional: Reset index after filtering for a clean sequence
     df = df.reset_index(drop=True)
 
     return df
