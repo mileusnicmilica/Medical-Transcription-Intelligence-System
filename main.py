@@ -14,6 +14,7 @@ from src.evaluator import evaluate_model
 from src.utils import save_artifacts
 
 def main():
+
     all_results = {}
 
     # 1. LOAD & BASIC CLEAN
@@ -21,7 +22,7 @@ def main():
     df = clean_medical_data(df)
 
     # 2. VISUALIZATION BEFORE BALANCING
-    plot_class_distribution(df)
+    plot_class_distribution(df, filename='class_distribution_before_balancing')
 
     # 3. SPACY PREPROCESSING
     cache_path = "data/cleaned_data_cache.csv"
@@ -68,17 +69,50 @@ def main():
     predictions = pipeline.predict(X_test)
 
     weighted_f1, balanced_acc = evaluate_model(y_test, predictions)
+    # VISUALIZATION AFTER BALANCING
+    from imblearn.over_sampling import RandomOverSampler as ROS
+    import numpy as np
+
+    ros = ROS(random_state=42)
+    X_dummy = np.zeros((len(X_train), 1))
+    _, y_balanced_viz = ros.fit_resample(X_dummy, y_train)
+    balanced_df = pd.DataFrame({'medical_specialty': y_balanced_viz})
+    plot_class_distribution(
+        balanced_df,
+        title=f'Class Distribution AFTER Balancing (RandomOverSampler)\nAll classes equalized to majority class size',
+        filename='class_distribution_after_balancing'
+    )
 
     # 8. SAVE
     save_artifacts(pipeline, name="linear_svc_v1")
 
     # 9. FINAL COMPARISON TABLE
+
     all_results['TF-IDF + LinearSVC'] = {
         'weighted_f1': weighted_f1,
         'balanced_accuracy': balanced_acc
     }
 
     print("\n=== FINAL TEST SET RESULTS ===")
+    results_df = pd.DataFrame(all_results).T
+    print(results_df)
+
+    # 10. SETFIT - FEW SHOT CLASSIFICATION
+    #from src.setfit_classifier import prepare_setfit_data, train_setfit, evaluate_setfit, save_setfit_model
+
+    #print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
+    #train_dataset, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
+    #setfit_model = train_setfit(train_dataset, test_dataset, label_encoder)
+    #setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
+    #save_setfit_model(setfit_model, label_encoder)
+
+
+    #all_results['SetFit (16 samples/class)'] = {
+     #   'weighted_f1': setfit_f1,
+     #   'balanced_accuracy': setfit_balanced_acc
+    #}
+
+    print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
 
