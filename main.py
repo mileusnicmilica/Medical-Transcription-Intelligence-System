@@ -114,5 +114,32 @@ def main():
     results_df = pd.DataFrame(all_results).T
     print(results_df)
 
+    # 11. SEMANTIC SEARCH - FAISS
+    from src.searcher import MedicalSearcher, evaluate_search
+
+    print("\n=== SEMANTIC SEARCH (FAISS) ===")
+    searcher = MedicalSearcher()
+
+    # existing cache index?
+    if os.path.exists("data/faiss_index/index.faiss"):
+        print("Loading existing FAISS index...")
+        searcher.load("data/faiss_index")
+    else:
+        print("Building FAISS index...")
+        searcher.build_index(df)
+        searcher.save("data/faiss_index")
+
+    # Evaluation - Precision@K
+    print("\n--- Search Evaluation ---")
+    search_results = evaluate_search(searcher, df, k_values=[1, 3, 5], n_queries=100)
+
+    # search test with example
+    print("\n--- Example Search ---")
+    example_query = "patient presents with chest pain and shortness of breath"
+    results = searcher.search(example_query, k=3)
+    print(f"Query: '{example_query}'")
+    for i, r in enumerate(results):
+        print(f"  {i + 1}. [{r['specialty']}] score={r['score']:.3f} | {r['text_preview'][:100]}...")
+
 if __name__ == "__main__":
     main()
