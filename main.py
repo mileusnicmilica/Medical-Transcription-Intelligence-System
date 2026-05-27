@@ -97,20 +97,18 @@ def main():
     results_df = pd.DataFrame(all_results).T
     print(results_df)
 
-    # 10. SETFIT - FEW SHOT CLASSIFICATION
-    #from src.setfit_classifier import prepare_setfit_data, train_setfit, evaluate_setfit, save_setfit_model
+    # 10. SETFIT - loading already trained model
+    from src.setfit_classifier import load_setfit_model, evaluate_setfit, prepare_setfit_data
 
-    #print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
-    #train_dataset, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
-    #setfit_model = train_setfit(train_dataset, test_dataset, label_encoder)
-    #setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
-    #save_setfit_model(setfit_model, label_encoder)
+    print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
+    _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
+    setfit_model, label_encoder = load_setfit_model()
+    setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
 
-
-    #all_results['SetFit (16 samples/class)'] = {
-     #   'weighted_f1': setfit_f1,
-     #   'balanced_accuracy': setfit_balanced_acc
-    #}
+    all_results['SetFit (16 samples/class)'] = {
+        'weighted_f1': setfit_f1,
+        'balanced_accuracy': setfit_balanced_acc
+    }
 
     print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T

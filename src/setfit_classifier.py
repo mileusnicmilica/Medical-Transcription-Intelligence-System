@@ -115,3 +115,9 @@ def save_setfit_model(model, label_encoder, name="setfit_v1"):
     model.save_pretrained(f"models/{name}")
     joblib.dump(label_encoder, f"models/{name}_label_encoder.pkl")
     print(f"\n--- Success: SetFit model saved as '{name}' ---")
+
+def load_setfit_model(name="setfit_v1"):
+    from setfit import SetFitModel
+    model = SetFitModel.from_pretrained(f"models/{name}")
+    le = joblib.load(f"models/{name}_label_encoder.pkl")
+    return model, le
