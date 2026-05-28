@@ -10,6 +10,7 @@ import os
 class MedicalSearcher:
     def __init__(self, model_name="all-MiniLM-L6-v2"):
         self.model = SentenceTransformer(model_name)
+        self.model_name = model_name  # comparing models
         self.index = None
         self.df = None
 
@@ -61,13 +62,17 @@ class MedicalSearcher:
         relevant = sum(1 for r in results if r['specialty'] == true_specialty)
         return relevant / k
 
-    def save(self, path="data/faiss_index"):
+    def save(self, path=None):
+        if path is None:
+            path = f"data/faiss_index_{self.model_name.replace('/', '_')}"
         os.makedirs(path, exist_ok=True)
         faiss.write_index(self.index, f"{path}/index.faiss")
         self.df.to_csv(f"{path}/documents.csv", index=False)
         print(f"Index saved to {path}")
 
-    def load(self, path="data/faiss_index"):
+    def load(self, path=None):
+        if path is None:
+            path = f"data/faiss_index_{self.model_name.replace('/', '_')}"
         self.index = faiss.read_index(f"{path}/index.faiss")
         self.df = pd.read_csv(f"{path}/documents.csv")
         print(f"Index loaded: {self.index.ntotal} documents")

@@ -42,8 +42,6 @@ class MedicalPreprocessor:
 
         return " ".join(clean_tokens)
 
-
-
     def preprocess_dataframe(self, df, column_name='transcription'):
         print(f"Starting SpaCy preprocessing...")
         # adding progress bar
