@@ -10,12 +10,25 @@ You will receive:
 1. Original medical transcription
 2. Extracted structured data (JSON)
 
-Evaluate THREE criteria for EACH field:
-1) Correctness — extracted items actually appear in the text
-2) Completeness — important items present in text are not missing
-3) Hallucinations — extracted items NOT supported by text
+--- SCORING INSTRUCTIONS ---
 
-Output ONLY valid JSON:
+For EACH field (symptoms, diagnoses, medications, procedures), compute a field_score in [0.0, 1.0] as follows:
+
+  Let N = total number of items that should have been extracted (present in text)
+  Let C = number of correctly extracted items (appear in text)
+  Let M = number of missing items (present in text but not extracted)
+  Let H = number of hallucinated items (extracted but NOT supported by text)
+
+  correctness  = C / (C + H)   if (C + H) > 0, else 1.0
+  completeness = C / (C + M)   if (C + M) > 0, else 1.0
+  field_score  = (correctness + completeness) / 2
+
+Then compute:
+  overall_score = average of all four field_scores
+
+--- OUTPUT FORMAT ---
+
+Output ONLY valid JSON with no additional text:
 {
   "field_scores": {
     "symptoms": 0.85,
@@ -23,20 +36,20 @@ Output ONLY valid JSON:
     "medications": 0.75,
     "procedures": 0.95
   },
-  "overall_score": 0.89,
+  "overall_score": 0.86,
   "missing_items": {
-    "symptoms": [],
+    "symptoms": ["item present in text but not extracted"],
     "diagnoses": [],
     "medications": [],
     "procedures": []
   },
   "hallucinations": {
-    "symptoms": [],
+    "symptoms": ["item extracted but not supported by text"],
     "diagnoses": [],
     "medications": [],
     "procedures": []
   },
-  "explanation": "Brief explanation"
+  "explanation": "One sentence per field describing the main source of error, or 'No errors.' if field_score is 1.0."
 }"""
 
 

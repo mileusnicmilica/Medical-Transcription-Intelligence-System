@@ -58,7 +58,8 @@ class MedicalSearcher:
         """
         Calculates Precision@K for a given query.
         """
-        results = self.search(query, k=k)
+        results = self.search(query, k=k + 1)
+        results = results[1:]
         relevant = sum(1 for r in results if r['specialty'] == true_specialty)
         return relevant / k
 
@@ -78,7 +79,7 @@ class MedicalSearcher:
         print(f"Index loaded: {self.index.ntotal} documents")
 
 
-def evaluate_search(searcher, df, k_values=[1, 3, 5], n_queries=100):
+def evaluate_search(searcher, df, k_values=(1, 3, 5), n_queries=100):
     """
     Evaluates search quality using Precision@K.
     """

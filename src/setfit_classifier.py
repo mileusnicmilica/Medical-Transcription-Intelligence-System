@@ -38,26 +38,34 @@ def prepare_setfit_data(df, n_samples=16):
 
     # Few-shot: sample n_samples per class
     few_shot_samples = []
+    val_samples_list = []
+
     for label_val in train_df['label'].unique():
         subset = train_df[train_df['label'] == label_val]
+
         sampled = subset.sample(min(n_samples, len(subset)), random_state=42)
         few_shot_samples.append(sampled)
 
+        remaining = subset.drop(sampled.index)
+        if len(remaining) > 0:
+            val_samples_list.append(remaining.sample(min(8, len(remaining)), random_state=42))
+
     few_shot_train = pd.concat(few_shot_samples).reset_index(drop=True)
+    val_df = pd.concat(val_samples_list).reset_index(drop=True)
 
     train_dataset = Dataset.from_pandas(few_shot_train)
+    val_dataset = Dataset.from_pandas(val_df)
     test_dataset = Dataset.from_pandas(test_df)
 
-    return train_dataset, test_dataset, le
+    return train_dataset, val_dataset, test_dataset, le
 
 
-def train_setfit(train_dataset, test_dataset, label_encoder,
+def train_setfit(train_dataset, val_dataset, label_encoder,
                  model_name="sentence-transformers/paraphrase-MiniLM-L6-v2"):
     """
     Trains a SetFit model.
     Uses paraphrase-MiniLM-L6-v2 as base (lighter than PubMedBERT, good for CPU).
     """
-    num_classes = len(label_encoder.classes_)
 
     model = SetFitModel.from_pretrained(model_name)
 
@@ -73,7 +81,7 @@ def train_setfit(train_dataset, test_dataset, label_encoder,
         model=model,
         args=args,
         train_dataset=train_dataset,
-        eval_dataset=test_dataset,
+        eval_dataset=val_dataset,
         metric="f1",
         metric_kwargs={"average": "weighted"}
     )

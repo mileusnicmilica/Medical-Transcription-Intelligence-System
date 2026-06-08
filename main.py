@@ -4,8 +4,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
-from imblearn.pipeline import Pipeline
-from imblearn.over_sampling import RandomOverSampler
+from sklearn.pipeline import Pipeline as SklearnPipeline
 
 from src.data_loader import download_and_load_data, clean_medical_data
 from src.preprocessor import MedicalPreprocessor
@@ -37,8 +36,8 @@ def main():
         df.to_csv(cache_path, index=False)
         print("Preprocessing saved to cache.")
 
-    # 4. TRAIN/TEST SPLIT (before balancing!)
-    X = df['cleaned_transcription']  # name from preprocessor.py
+    # 4. TRAIN/TEST SPLIT
+    X = df['cleaned_transcription']
     y = df['medical_specialty']
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -46,14 +45,12 @@ def main():
     )
 
     # 5. PIPELINE: TF-IDF + SMOTE + LinearSVC
-    # SMOTE applies only on training folds under cross-validation
-    pipeline = Pipeline([
-        ('tfidf', TfidfVectorizer()),
-        ('smote', RandomOverSampler(random_state=42)),  # or SMOTE?
-        ('clf', LinearSVC(random_state=42))
+    pipeline = SklearnPipeline([
+        ('tfidf', TfidfVectorizer(max_features=5000)),
+        ('clf', LinearSVC(class_weight='balanced', random_state=42))
     ])
 
-    # 6. CROSS-VALIDATION (balancing is part of this process)
+    # 6. CROSS-VALIDATION
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     cv_results = cross_validate(
         pipeline, X_train, y_train, cv=cv,
@@ -101,7 +98,7 @@ def main():
     from src.setfit_classifier import load_setfit_model, evaluate_setfit, prepare_setfit_data
 
     print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
-    _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
+    _, _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
     setfit_model, label_encoder = load_setfit_model()
     setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
 
