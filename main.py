@@ -66,6 +66,7 @@ def main():
     predictions = pipeline.predict(X_test)
 
     weighted_f1, balanced_acc = evaluate_model(y_test, predictions)
+
     # VISUALIZATION AFTER BALANCING
     from imblearn.over_sampling import RandomOverSampler as ROS
     import numpy as np
@@ -98,18 +99,23 @@ def main():
     from src.setfit_classifier import load_setfit_model, evaluate_setfit, prepare_setfit_data
 
     print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
-    _, _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16)
+    from src.setfit_classifier import (
+        load_setfit_model, evaluate_setfit, prepare_setfit_data,
+        train_setfit, save_setfit_model
+    )
+
+    print("\n=== SETFIT (LEMMATIZED, EXISTING MODEL) ===")
+    _, _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16, text_column='cleaned_transcription')
     setfit_model, label_encoder = load_setfit_model()
     setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
+    all_results['SetFit (lemmatized)'] = {'weighted_f1': setfit_f1, 'balanced_accuracy': setfit_balanced_acc}
 
-    all_results['SetFit (16 samples/class)'] = {
-        'weighted_f1': setfit_f1,
-        'balanced_accuracy': setfit_balanced_acc
-    }
-
-    print("\n=== FINAL COMPARISON TABLE ===")
-    results_df = pd.DataFrame(all_results).T
-    print(results_df)
+    print("\n=== SETFIT (RAW TEXT, ABLATION - TRAINING FROM SCRATCH) ===")
+    train_ds_raw, val_ds_raw, test_ds_raw, le_raw = prepare_setfit_data(df, n_samples=16, text_column='transcription')
+    setfit_model_raw = train_setfit(train_ds_raw, val_ds_raw, le_raw, num_iterations=1)
+    save_setfit_model(setfit_model_raw, le_raw, name="setfit_v1_raw")
+    setfit_f1_raw, setfit_balanced_acc_raw = evaluate_setfit(setfit_model_raw, test_ds_raw, le_raw)
+    all_results['SetFit (raw)'] = {'weighted_f1': setfit_f1_raw, 'balanced_accuracy': setfit_balanced_acc_raw}
 
     # 11. SEMANTIC SEARCH - FAISS (comparison of embedding models)
     from src.searcher import MedicalSearcher, evaluate_search
@@ -120,72 +126,48 @@ def main():
         "all-MiniLM-L6-v2",
         "NeuML/pubmedbert-base-embeddings"
     ]
+    text_columns = ["transcription", "cleaned_transcription"]  # raw vs. lemmatized
 
     search_results_all = {}
 
     for model_name in embedding_models:
-        print(f"\n--- Model: {model_name} ---")
-        searcher = MedicalSearcher(model_name=model_name)
+        for text_column in text_columns:
+            label = f"{model_name} [{text_column}]"
+            print(f"\n--- Model: {model_name} | Tekst: {text_column} ---")
+            searcher = MedicalSearcher(model_name=model_name)
 
-        index_path = f"data/faiss_index_{model_name.replace('/', '_')}"
+            index_path = f"data/faiss_index_{model_name.replace('/', '_')}_{text_column}"
 
-        if os.path.exists(f"{index_path}/index.faiss"):
-            print("Loading existing index...")
-            searcher.load(index_path)
-        else:
-            print("Building index...")
-            searcher.build_index(df)
-            searcher.save(index_path)
+            if os.path.exists(f"{index_path}/index.faiss"):
+                print("Loading existing index...")
+                searcher.load(index_path)
+            else:
+                print("Building index...")
+                searcher.build_index(df, text_column=text_column)
+                searcher.save(index_path)
 
-        print("\n--- Search Evaluation ---")
-        results = evaluate_search(searcher, df, k_values=[1, 3, 5], n_queries=100)
-        search_results_all[model_name] = results
+            print("\n--- Search Evaluation ---")
+            results = evaluate_search(searcher, df, k_values=[1, 3, 5], n_queries=100, text_column=text_column)
+            search_results_all[label] = results
 
-    print("\n=== EMBEDDING MODEL COMPARISON ===")
+    print("\n=== EMBEDDING MODEL COMPARISON (raw vs. lemmatized) ===")
     comparison_df = pd.DataFrame(search_results_all).T
     print(comparison_df)
-    all_results['FAISS (MiniLM)'] = {'weighted_f1': search_results_all['all-MiniLM-L6-v2'].get('Precision@5', 0),
-                                     'balanced_accuracy': 0}
-    all_results['FAISS (PubMedBERT)'] = {
-        'weighted_f1': search_results_all['NeuML/pubmedbert-base-embeddings'].get('Precision@5', 0),
-        'balanced_accuracy': 0}
     # 12. ENTITY EXTRACTION (Ollama - Local LLM)
     try:
         import requests
         requests.get("http://localhost:11434", timeout=2)
         from src.extractor import run_extraction_pipeline
-        print("\n=== ENTITY EXTRACTION (Ollama) ===")
-        extraction_results = run_extraction_pipeline(df, n_samples=5)
-    except Exception:
-        print("\n=== ENTITY EXTRACTION (Ollama) - Sample Results from Colab ===")
-        print("Note: Ollama not running locally. Results below are from Colab execution.")
+        print("\n=== ENTITY EXTRACTION (Ollama) + JUDGE (Groq) ===")
+        if os.environ.get("GROQ_API_KEY"):
+            extraction_results = run_extraction_pipeline(df, n_samples=5, judge="groq")
+        else:
+            print("GROQ_API_KEY — fallback on local Ollama judge.")
+            extraction_results = run_extraction_pipeline(df, n_samples=5, judge="ollama")
+    except Exception as e:
+        print(f"\n=== Ollama is not available: {e} ===")
+        print("Start 'ollama serve' first and then run again.")
 
-        sample_results = [
-            {"specialty": "General Medicine",
-             "extracted": {"diagnoses": ["Hydrocarbon aspiration", "Aplastic crisis"], "medications": [],
-                           "symptoms": ["Dyspnea", "Pleuritic chest pain", "Hemoptysis", "Nausea", "Vomiting"],
-                           "procedures": []}, "judge_score": 0.79},
-            {"specialty": "Obstetrics / Gynecology",
-             "extracted": {"diagnoses": ["Recurrent dysplasia of vulva"], "medications": [],
-                           "symptoms": ["slightly raised and pigmented lesions", "acetowhite epithelium"],
-                           "procedures": ["Carbon dioxide laser photo-ablation"]}, "judge_score": 0.92},
-            {"specialty": "Pain Management",
-             "extracted": {"diagnoses": ["Low back pain"], "medications": [], "symptoms": [],
-                           "procedures": ["Lumbar discogram L2-3", "Lumbar discogram L3-4", "Lumbar discogram L4-5",
-                                          "Lumbar discogram L5-S1"]}, "judge_score": 0.89},
-            {"specialty": "Radiology", "extracted": {"diagnoses": ["Left hemibody numbness"], "medications": [],
-                                                     "symptoms": ["Weakness", "Ataxia", "Visual changes"],
-                                                     "procedures": []}, "judge_score": 0.89},
-        ]
-
-        import json
-        for r in sample_results:
-            print(f"\nSpecialty: {r['specialty']}")
-            print(f"Extracted: {json.dumps(r['extracted'], indent=2)}")
-            print(f"Judge Score: {r['judge_score']}")
-
-        avg = sum(r['judge_score'] for r in sample_results) / len(sample_results)
-        print(f"\nAverage Judge Score: {avg:.3f}")
 
     print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T

@@ -1,6 +1,7 @@
 # src/extractor.py
 import requests
 import json
+import os
 
 JUDGE_SYSTEM_PROMPT = """You are an expert medical information extraction evaluator.
 
@@ -92,7 +93,7 @@ def create_judge_prompt(transcription, extracted_json):
 
 ORIGINAL TRANSCRIPTION:
 ---
-{transcription[:3000]}
+{transcription[:1000]}
 ---
 
 EXTRACTED DATA:
@@ -124,10 +125,48 @@ def evaluate_extraction(transcription, extracted_json, model="llama3.2:3b", host
     except:
         return {"raw_response": raw}
 
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_JUDGE_MODEL = "openai/gpt-oss-120b"  # adressing self-evaluation bias
 
-def run_extraction_pipeline(df, n_samples=5, model="llama3.2:3b", host="http://localhost:11434"):
+
+def evaluate_extraction_groq(transcription, extracted_json, model=GROQ_JUDGE_MODEL):
+    """
+    Uses a stronger, heterogeneous LLM (via Groq API) as judge.
+    Different model family/architecture than the local extractor -> addresses self-evaluation bias.
+    """
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY nije podešen. Pokreni: export GROQ_API_KEY=tvoj_kljuc")
+
+    judge_prompt = create_judge_prompt(transcription, extracted_json)
+
+    response = requests.post(
+        GROQ_API_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": judge_prompt}
+            ],
+            "temperature": 0
+        },
+        timeout=30
+    )
+    response.raise_for_status()
+    raw = response.json()["choices"][0]["message"]["content"].strip()
+
+    try:
+        start = raw.find('{')
+        end = raw.rfind('}') + 1
+        return json.loads(raw[start:end])
+    except (ValueError, json.JSONDecodeError):
+        return {"raw_response": raw}
+def run_extraction_pipeline(df, n_samples=5, model="llama3.2:3b", host="http://localhost:11434",
+                             judge="groq", judge_model=None):
     """
     Runs extraction and evaluation on n_samples from the dataframe.
+    judge: "groq" (stronger, heterogeneous judge) or "ollama" (local, same model family as extractor - for comparison).
     """
     samples = df.sample(n=n_samples, random_state=42)
     results = []
@@ -141,14 +180,15 @@ def run_extraction_pipeline(df, n_samples=5, model="llama3.2:3b", host="http://l
         print("Extracted:")
         print(json.dumps(extracted, indent=2))
 
-        evaluation = evaluate_extraction(row['transcription'], extracted, model=model, host=host)
+        if judge == "groq":
+            evaluation = evaluate_extraction_groq(row['transcription'], extracted,
+                                                   model=judge_model or GROQ_JUDGE_MODEL)
+        else:
+            evaluation = evaluate_extraction(row['transcription'], extracted, model=model, host=host)
+
         print(f"\nJudge Score: {evaluation.get('overall_score', 'N/A')}")
 
-        results.append({
-            'specialty': row['medical_specialty'],
-            'extracted': extracted,
-            'evaluation': evaluation
-        })
+        results.append({'specialty': row['medical_specialty'], 'extracted': extracted, 'evaluation': evaluation})
 
     scores = [r['evaluation'].get('overall_score', 0) for r in results
               if isinstance(r['evaluation'].get('overall_score'), float)]

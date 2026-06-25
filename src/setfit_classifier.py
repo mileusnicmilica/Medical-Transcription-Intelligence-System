@@ -10,7 +10,7 @@ import joblib
 import os
 
 
-def prepare_setfit_data(df, n_samples=16):
+def prepare_setfit_data(df, n_samples=16, text_column='cleaned_transcription'):
     """
     Prepares few-shot dataset for SetFit.
     Takes n_samples per class from training data.
@@ -27,9 +27,8 @@ def prepare_setfit_data(df, n_samples=16):
     df = df.copy()
     df['label'] = le.fit_transform(df['medical_specialty'])
 
-    # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
-        df['cleaned_transcription'], df['label'],
+        df[text_column], df['label'],
         test_size=0.2, random_state=42, stratify=df['label']
     )
 
@@ -61,7 +60,8 @@ def prepare_setfit_data(df, n_samples=16):
 
 
 def train_setfit(train_dataset, val_dataset, label_encoder,
-                 model_name="sentence-transformers/paraphrase-MiniLM-L6-v2"):
+                 model_name="sentence-transformers/paraphrase-MiniLM-L6-v2",
+                 num_iterations=3):
     """
     Trains a SetFit model.
     Uses paraphrase-MiniLM-L6-v2 as base (lighter than PubMedBERT, good for CPU).
@@ -73,6 +73,7 @@ def train_setfit(train_dataset, val_dataset, label_encoder,
         batch_size=16,
         num_epochs=1,
         evaluation_strategy="epoch",
+        num_iterations=num_iterations,
         save_strategy="no",
         load_best_model_at_end=False,
     )
