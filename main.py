@@ -65,7 +65,7 @@ def main():
     pipeline.fit(X_train, y_train)
     predictions = pipeline.predict(X_test)
 
-    weighted_f1, balanced_acc = evaluate_model(y_test, predictions)
+    weighted_f1, macro_f1, balanced_acc = evaluate_model(y_test, predictions)
 
     # VISUALIZATION AFTER BALANCING
     from imblearn.over_sampling import RandomOverSampler as ROS
@@ -88,6 +88,7 @@ def main():
 
     all_results['TF-IDF + LinearSVC'] = {
         'weighted_f1': weighted_f1,
+        'macro_f1': macro_f1,
         'balanced_accuracy': balanced_acc
     }
 
@@ -109,8 +110,9 @@ def main():
     )
     setfit_model_lemma = train_setfit(train_ds_lemma, val_ds_lemma, le_lemma, num_iterations=1)
     save_setfit_model(setfit_model_lemma, le_lemma, name="setfit_v1_lemmatized")
-    setfit_f1_lemma, setfit_balanced_acc_lemma = evaluate_setfit(setfit_model_lemma, test_ds_lemma, le_lemma)
-    all_results['SetFit (lemmatized)'] = {'weighted_f1': setfit_f1_lemma,
+    setfit_f1_lemma, setfit_macro_f1_lemma, setfit_balanced_acc_lemma = evaluate_setfit(setfit_model_lemma,
+                                                                                        test_ds_lemma, le_lemma)
+    all_results['SetFit (lemmatized)'] = {'weighted_f1': setfit_f1_lemma, 'macro_f1': setfit_macro_f1_lemma,
                                           'balanced_accuracy': setfit_balanced_acc_lemma}
 
     print("\n=== SETFIT (RAW TEXT, TRAINING FROM SCRATCH) ===")
@@ -119,9 +121,9 @@ def main():
     )
     setfit_model_raw = train_setfit(train_ds_raw, val_ds_raw, le_raw, num_iterations=1)
     save_setfit_model(setfit_model_raw, le_raw, name="setfit_v1_raw")
-    setfit_f1_raw, setfit_balanced_acc_raw = evaluate_setfit(setfit_model_raw, test_ds_raw, le_raw)
-    all_results['SetFit (raw)'] = {'weighted_f1': setfit_f1_raw, 'balanced_accuracy': setfit_balanced_acc_raw}
-
+    setfit_f1_raw, setfit_macro_f1_raw, setfit_balanced_acc_raw = evaluate_setfit(setfit_model_raw, test_ds_raw, le_raw)
+    all_results['SetFit (raw)'] = {'weighted_f1': setfit_f1_raw, 'macro_f1': setfit_macro_f1_raw,
+                                   'balanced_accuracy': setfit_balanced_acc_raw}
     # 11. SEMANTIC SEARCH - FAISS (comparison of embedding models)
     from src.searcher import MedicalSearcher, evaluate_search
 
@@ -204,9 +206,64 @@ def main():
         print("Start 'ollama serve' first and then run again.")
 
 
+
+
     print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
+    # 13. SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS (macro-F1 is the key metric, since
+    # Surgery's dominance specifically distorts macro-averaged performance across classes)
+    print("\n=== SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS ===")
+
+    df_no_surgery = df[df['medical_specialty'] != 'Surgery'].reset_index(drop=True)
+    print(f"Removed Surgery class: {len(df)} -> {len(df_no_surgery)} samples "
+          f"({len(df) - len(df_no_surgery)} samples removed)")
+
+    surgery_results = {}
+
+    # --- TF-IDF + LinearSVC, without Surgery ---
+    X_ns = df_no_surgery['cleaned_transcription']
+    y_ns = df_no_surgery['medical_specialty']
+
+    X_train_ns, X_test_ns, y_train_ns, y_test_ns = train_test_split(
+        X_ns, y_ns, test_size=0.2, random_state=42, stratify=y_ns
+    )
+
+    pipeline_ns = SklearnPipeline([
+        ('tfidf', TfidfVectorizer(max_features=5000)),
+        ('clf', LinearSVC(class_weight='balanced', random_state=42))
+    ])
+    pipeline_ns.fit(X_train_ns, y_train_ns)
+    predictions_ns = pipeline_ns.predict(X_test_ns)
+
+    print("\n--- TF-IDF + LinearSVC (no Surgery) ---")
+    tfidf_w_f1_ns, tfidf_macro_f1_ns, tfidf_bal_acc_ns = evaluate_model(y_test_ns, predictions_ns)
+    surgery_results['TF-IDF + LinearSVC (no Surgery)'] = {
+        'weighted_f1': tfidf_w_f1_ns, 'macro_f1': tfidf_macro_f1_ns, 'balanced_accuracy': tfidf_bal_acc_ns
+    }
+
+    # --- SetFit (lemmatized), without Surgery - same training budget as the raw/lemmatized ablation ---
+    print("\n--- SetFit (lemmatized, no Surgery) ---")
+    train_ds_ns, val_ds_ns, test_ds_ns, le_ns = prepare_setfit_data(
+        df_no_surgery, n_samples=16, text_column='cleaned_transcription'
+    )
+    setfit_model_ns = train_setfit(train_ds_ns, val_ds_ns, le_ns, num_iterations=1)
+    save_setfit_model(setfit_model_ns, le_ns, name="setfit_v1_lemmatized_no_surgery")
+    setfit_w_f1_ns, setfit_macro_f1_ns, setfit_bal_acc_ns = evaluate_setfit(setfit_model_ns, test_ds_ns, le_ns)
+    surgery_results['SetFit (lemmatized, no Surgery)'] = {
+        'weighted_f1': setfit_w_f1_ns, 'macro_f1': setfit_macro_f1_ns, 'balanced_accuracy': setfit_bal_acc_ns
+    }
+
+    # --- Before/after comparison table ---
+    print("\n=== SURGERY REMOVAL - BEFORE/AFTER COMPARISON (focus on macro_f1) ===")
+    surgery_comparison = pd.DataFrame({
+        'TF-IDF + LinearSVC (with Surgery)': all_results.get('TF-IDF + LinearSVC', {}),
+        'TF-IDF + LinearSVC (no Surgery)': surgery_results.get('TF-IDF + LinearSVC (no Surgery)', {}),
+        'SetFit (with Surgery, lemmatized)': all_results.get('SetFit (lemmatized)', {}),
+        'SetFit (no Surgery, lemmatized)': surgery_results.get('SetFit (lemmatized, no Surgery)', {}),
+    }).T
+    print(surgery_comparison)
+
 
 if __name__ == "__main__":
     main()

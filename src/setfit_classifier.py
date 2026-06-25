@@ -104,16 +104,18 @@ def evaluate_setfit(model, test_dataset, label_encoder):
     true_labels = np.array(true_labels)
 
     weighted_f1 = f1_score(true_labels, predictions, average='weighted')
+    macro_f1 = f1_score(true_labels, predictions, average='macro')  # NEW
     balanced_acc = balanced_accuracy_score(true_labels, predictions)
 
     print("\n--- SetFit Model Evaluation ---")
     print(f"Weighted F1:       {weighted_f1:.4f}")
+    print(f"Macro F1:          {macro_f1:.4f}")
     print(f"Balanced Accuracy: {balanced_acc:.4f}")
     print("\nDetailed Report:")
     print(classification_report(true_labels, predictions,
                                 target_names=label_encoder.classes_))
 
-    return weighted_f1, balanced_acc
+    return weighted_f1, macro_f1, balanced_acc
 
 
 def save_setfit_model(model, label_encoder, name="setfit_v1"):
