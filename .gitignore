@@ -6,6 +6,6 @@ __pycache__/
 
 # Trained models / artifacts
 models/
-data/faiss_index_*/
+data/faiss_index*/
 data/*.csv
 data/*.png
