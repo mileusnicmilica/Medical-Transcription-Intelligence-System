@@ -1,6 +1,11 @@
+# Python
 .venv/
-.idea/
 __pycache__/
+*.pyc
+.idea/
+
+# Trained models / artifacts
+models/
+data/faiss_index_*/
 data/*.csv
-models/*.pkl
-*.cache.csv
+data/*.png

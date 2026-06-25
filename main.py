@@ -95,23 +95,28 @@ def main():
     results_df = pd.DataFrame(all_results).T
     print(results_df)
 
-    # 10. SETFIT - loading already trained model
-    from src.setfit_classifier import load_setfit_model, evaluate_setfit, prepare_setfit_data
-
-    print("\n=== SETFIT FEW-SHOT CLASSIFICATION ===")
+    # 10. SETFIT - fair ablation: both variants trained from scratch, same num_iterations
     from src.setfit_classifier import (
-        load_setfit_model, evaluate_setfit, prepare_setfit_data,
+        evaluate_setfit, prepare_setfit_data,
         train_setfit, save_setfit_model
     )
 
-    print("\n=== SETFIT (LEMMATIZED, EXISTING MODEL) ===")
-    _, _, test_dataset, label_encoder = prepare_setfit_data(df, n_samples=16, text_column='cleaned_transcription')
-    setfit_model, label_encoder = load_setfit_model()
-    setfit_f1, setfit_balanced_acc = evaluate_setfit(setfit_model, test_dataset, label_encoder)
-    all_results['SetFit (lemmatized)'] = {'weighted_f1': setfit_f1, 'balanced_accuracy': setfit_balanced_acc}
+    print("\n=== SETFIT FEW-SHOT CLASSIFICATION (raw vs. lemmatized ablation) ===")
 
-    print("\n=== SETFIT (RAW TEXT, ABLATION - TRAINING FROM SCRATCH) ===")
-    train_ds_raw, val_ds_raw, test_ds_raw, le_raw = prepare_setfit_data(df, n_samples=16, text_column='transcription')
+    print("\n=== SETFIT (LEMMATIZED, TRAINING FROM SCRATCH) ===")
+    train_ds_lemma, val_ds_lemma, test_ds_lemma, le_lemma = prepare_setfit_data(
+        df, n_samples=16, text_column='cleaned_transcription'
+    )
+    setfit_model_lemma = train_setfit(train_ds_lemma, val_ds_lemma, le_lemma, num_iterations=1)
+    save_setfit_model(setfit_model_lemma, le_lemma, name="setfit_v1_lemmatized")
+    setfit_f1_lemma, setfit_balanced_acc_lemma = evaluate_setfit(setfit_model_lemma, test_ds_lemma, le_lemma)
+    all_results['SetFit (lemmatized)'] = {'weighted_f1': setfit_f1_lemma,
+                                          'balanced_accuracy': setfit_balanced_acc_lemma}
+
+    print("\n=== SETFIT (RAW TEXT, TRAINING FROM SCRATCH) ===")
+    train_ds_raw, val_ds_raw, test_ds_raw, le_raw = prepare_setfit_data(
+        df, n_samples=16, text_column='transcription'
+    )
     setfit_model_raw = train_setfit(train_ds_raw, val_ds_raw, le_raw, num_iterations=1)
     save_setfit_model(setfit_model_raw, le_raw, name="setfit_v1_raw")
     setfit_f1_raw, setfit_balanced_acc_raw = evaluate_setfit(setfit_model_raw, test_ds_raw, le_raw)
@@ -153,17 +158,47 @@ def main():
     print("\n=== EMBEDDING MODEL COMPARISON (raw vs. lemmatized) ===")
     comparison_df = pd.DataFrame(search_results_all).T
     print(comparison_df)
-    # 12. ENTITY EXTRACTION (Ollama - Local LLM)
+
+    # 12. ENTITY EXTRACTION (Ollama - Local LLM) + JUDGE COMPARISON (single Groq vs. heterogeneous panel)
     try:
         import requests
         requests.get("http://localhost:11434", timeout=2)
         from src.extractor import run_extraction_pipeline
-        print("\n=== ENTITY EXTRACTION (Ollama) + JUDGE (Groq) ===")
-        if os.environ.get("GROQ_API_KEY"):
-            extraction_results = run_extraction_pipeline(df, n_samples=5, judge="groq")
-        else:
-            print("GROQ_API_KEY — fallback on local Ollama judge.")
+
+        if not os.environ.get("GROQ_API_KEY"):
+            print("\nGROQ_API_KEY not set — falling back to local Ollama judge only.")
             extraction_results = run_extraction_pipeline(df, n_samples=5, judge="ollama")
+        else:
+            print("\n=== ENTITY EXTRACTION (Ollama) + JUDGE: GROQ (single, stronger judge) ===")
+            extraction_results_groq = run_extraction_pipeline(df, n_samples=5, judge="groq")
+
+            print("\n=== ENTITY EXTRACTION (Ollama) + JUDGE: PANEL (heterogeneous + self-eval baseline) ===")
+            extraction_results_panel = run_extraction_pipeline(df, n_samples=5, judge="panel")
+
+            groq_scores = [r['evaluation'].get('overall_score') for r in extraction_results_groq
+                           if isinstance(r['evaluation'].get('overall_score'), (int, float))]
+            panel_means = [r['evaluation']['panel_summary'].get('panel_mean') for r in extraction_results_panel
+                           if r['evaluation'].get('panel_summary')
+                           and isinstance(r['evaluation']['panel_summary'].get('panel_mean'), (int, float))]
+            self_eval_scores = [r['evaluation']['panel_summary'].get('self_eval_score') for r in
+                                extraction_results_panel
+                                if r['evaluation'].get('panel_summary')
+                                and isinstance(r['evaluation']['panel_summary'].get('self_eval_score'), (int, float))]
+
+            print("\n=== JUDGE METHODOLOGY COMPARISON (same 5 samples, random_state=42) ===")
+            judge_comparison = pd.DataFrame({
+                'avg_score': {
+                    'Self-eval baseline (Ollama judges itself)': sum(self_eval_scores) / len(
+                        self_eval_scores) if self_eval_scores else None,
+                    'Single Groq judge (openai/gpt-oss-120b)': sum(groq_scores) / len(
+                        groq_scores) if groq_scores else None,
+                    'Heterogeneous panel (gpt-oss-120b + qwen3.6-27b, mean)': sum(panel_means) / len(
+                        panel_means) if panel_means else None,
+                }
+            })
+            print(judge_comparison)
+
+            extraction_results = extraction_results_panel  # keep the richest result set, in case it's needed later
     except Exception as e:
         print(f"\n=== Ollama is not available: {e} ===")
         print("Start 'ollama serve' first and then run again.")
