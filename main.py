@@ -44,25 +44,37 @@ def main():
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # 5. PIPELINE: TF-IDF + SMOTE + LinearSVC
-    pipeline = SklearnPipeline([
+    # 5. PIPELINE: TF-IDF + LinearSVC, with GridSearchCV tuning (kept consistent with the
+    # no-Surgery variant in step 13, so the Surgery-removal comparison isolates that one
+    # variable rather than conflating it with hyperparameter tuning)
+    base_pipeline = SklearnPipeline([
         ('tfidf', TfidfVectorizer(max_features=5000)),
-        ('clf', LinearSVC(class_weight='balanced', random_state=42))
+        ('clf', LinearSVC(class_weight='balanced', random_state=42, max_iter=5000))
     ])
 
-    # 6. CROSS-VALIDATION
+    param_grid = {'clf__C': [0.1, 1, 10]}
+
+    # 6. CROSS-VALIDATION (on the base, untuned pipeline - kept as a separate diagnostic,
+    # not the basis for the final reported numbers)
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     cv_results = cross_validate(
-        pipeline, X_train, y_train, cv=cv,
+        base_pipeline, X_train, y_train, cv=cv,
         scoring=['f1_weighted', 'balanced_accuracy']
     )
 
     print("\n=== CROSS-VALIDATION RESULTS ===")
-    print(f"Weighted F1:        {cv_results['test_f1_weighted'].mean():.4f} ± {cv_results['test_f1_weighted'].std():.4f}")
-    print(f"Balanced Accuracy:  {cv_results['test_balanced_accuracy'].mean():.4f} ± {cv_results['test_balanced_accuracy'].std():.4f}")
+    print(
+        f"Weighted F1:        {cv_results['test_f1_weighted'].mean():.4f} ± {cv_results['test_f1_weighted'].std():.4f}")
+    print(
+        f"Balanced Accuracy:  {cv_results['test_balanced_accuracy'].mean():.4f} ± {cv_results['test_balanced_accuracy'].std():.4f}")
 
-    # 7. FINAL FIT - TRAIN SET and EVALUATION - TEST SET
-    pipeline.fit(X_train, y_train)
+    # 7. GRIDSEARCHCV TUNING + FINAL FIT - TRAIN SET and EVALUATION - TEST SET
+    from sklearn.model_selection import GridSearchCV
+    grid = GridSearchCV(base_pipeline, param_grid, cv=3, scoring='f1_macro')
+    grid.fit(X_train, y_train)
+    pipeline = grid.best_estimator_
+    print(f"Best hyperparameters (with Surgery): {grid.best_params_}")
+
     predictions = pipeline.predict(X_test)
 
     weighted_f1, macro_f1, balanced_acc = evaluate_model(y_test, predictions)
@@ -211,8 +223,12 @@ def main():
     print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
-    # 13. SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS (macro-F1 is the key metric, since
-    # Surgery's dominance specifically distorts macro-averaged performance across classes)
+    # 13. SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS + GridSearchCV TUNING
+    # (macro-F1 is the key metric, since Surgery's dominance specifically distorts
+    # macro-averaged performance; these tuned, Surgery-removed models become the
+    # final system used in the Streamlit demo)
+    from sklearn.model_selection import GridSearchCV
+
     print("\n=== SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS ===")
 
     df_no_surgery = df[df['medical_specialty'] != 'Surgery'].reset_index(drop=True)
@@ -221,7 +237,7 @@ def main():
 
     surgery_results = {}
 
-    # --- TF-IDF + LinearSVC, without Surgery ---
+    # --- TF-IDF + LinearSVC, without Surgery, with GridSearchCV hyperparameter tuning ---
     X_ns = df_no_surgery['cleaned_transcription']
     y_ns = df_no_surgery['medical_specialty']
 
@@ -229,18 +245,28 @@ def main():
         X_ns, y_ns, test_size=0.2, random_state=42, stratify=y_ns
     )
 
-    pipeline_ns = SklearnPipeline([
+    base_pipeline_ns = SklearnPipeline([
         ('tfidf', TfidfVectorizer(max_features=5000)),
         ('clf', LinearSVC(class_weight='balanced', random_state=42))
     ])
-    pipeline_ns.fit(X_train_ns, y_train_ns)
+
+    # GridSearchCV over the full pipeline, scored on macro-F1 since that's our key metric
+    param_grid = {'clf__C': [0.1, 1, 10]}
+    grid_ns = GridSearchCV(base_pipeline_ns, param_grid, cv=3, scoring='f1_macro')
+    grid_ns.fit(X_train_ns, y_train_ns)
+    pipeline_ns = grid_ns.best_estimator_
+    print(f"Best hyperparameters (no Surgery): {grid_ns.best_params_}")
+
     predictions_ns = pipeline_ns.predict(X_test_ns)
 
-    print("\n--- TF-IDF + LinearSVC (no Surgery) ---")
+    print("\n--- TF-IDF + LinearSVC (no Surgery, GridSearch-tuned) ---")
     tfidf_w_f1_ns, tfidf_macro_f1_ns, tfidf_bal_acc_ns = evaluate_model(y_test_ns, predictions_ns)
-    surgery_results['TF-IDF + LinearSVC (no Surgery)'] = {
+    surgery_results['TF-IDF + LinearSVC (no Surgery, tuned)'] = {
         'weighted_f1': tfidf_w_f1_ns, 'macro_f1': tfidf_macro_f1_ns, 'balanced_accuracy': tfidf_bal_acc_ns
     }
+
+    # Save this as the FINAL TF-IDF model used in the Streamlit demo
+    save_artifacts(pipeline_ns, name="linear_svc_v1_no_surgery")
 
     # --- SetFit (lemmatized), without Surgery - same training budget as the raw/lemmatized ablation ---
     print("\n--- SetFit (lemmatized, no Surgery) ---")
@@ -258,7 +284,7 @@ def main():
     print("\n=== SURGERY REMOVAL - BEFORE/AFTER COMPARISON (focus on macro_f1) ===")
     surgery_comparison = pd.DataFrame({
         'TF-IDF + LinearSVC (with Surgery)': all_results.get('TF-IDF + LinearSVC', {}),
-        'TF-IDF + LinearSVC (no Surgery)': surgery_results.get('TF-IDF + LinearSVC (no Surgery)', {}),
+        'TF-IDF + LinearSVC (no Surgery, tuned)': surgery_results.get('TF-IDF + LinearSVC (no Surgery, tuned)', {}),
         'SetFit (with Surgery, lemmatized)': all_results.get('SetFit (lemmatized)', {}),
         'SetFit (no Surgery, lemmatized)': surgery_results.get('SetFit (lemmatized, no Surgery)', {}),
     }).T
