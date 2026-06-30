@@ -24,7 +24,7 @@ def balance_data(df, text_column='cleaned_transcription', target_column='medical
     # 2. Fit TF-IDF only on training data
     tfidf = TfidfVectorizer(max_features=5000)
     X_train_tfidf = tfidf.fit_transform(X_train)
-    X_test_tfidf = tfidf.transform(X_test)  # only transform, never fit on test
+    X_test_tfidf = tfidf.transform(X_test)  
 
     # 3. Apply SMOTE only on training data
     smote = SMOTE(random_state=42)

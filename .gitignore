@@ -4,8 +4,6 @@ __pycache__/
 *.pyc
 .idea/
 
-# Trained models / artifacts
-models/
-data/faiss_index*/
+# artifacts
 data/*.csv
 data/*.png

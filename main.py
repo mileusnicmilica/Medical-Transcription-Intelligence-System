@@ -1,7 +1,7 @@
 # main.py
 import os
 import pandas as pd
-from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate, GridSearchCV
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline as SklearnPipeline
@@ -11,6 +11,12 @@ from src.preprocessor import MedicalPreprocessor
 from src.visualizer import plot_class_distribution
 from src.evaluator import evaluate_model
 from src.utils import save_artifacts
+
+# Shared hyperparameter grid for TF-IDF + LinearSVC tuning, used identically in both the
+# full-dataset (step 7) and Surgery-removed (step 13) pipelines, so the ablation comparison
+# isolates the Surgery-removal effect rather than conflating it with tuning differences.
+TFIDF_SVC_PARAM_GRID = {'clf__C': [0.1, 1, 10]}
+
 
 def main():
 
@@ -52,8 +58,6 @@ def main():
         ('clf', LinearSVC(class_weight='balanced', random_state=42, max_iter=5000))
     ])
 
-    param_grid = {'clf__C': [0.1, 1, 10]}
-
     # 6. CROSS-VALIDATION (on the base, untuned pipeline - kept as a separate diagnostic,
     # not the basis for the final reported numbers)
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -69,8 +73,7 @@ def main():
         f"Balanced Accuracy:  {cv_results['test_balanced_accuracy'].mean():.4f} ± {cv_results['test_balanced_accuracy'].std():.4f}")
 
     # 7. GRIDSEARCHCV TUNING + FINAL FIT - TRAIN SET and EVALUATION - TEST SET
-    from sklearn.model_selection import GridSearchCV
-    grid = GridSearchCV(base_pipeline, param_grid, cv=3, scoring='f1_macro')
+    grid = GridSearchCV(base_pipeline, TFIDF_SVC_PARAM_GRID, cv=3, scoring='f1_macro')
     grid.fit(X_train, y_train)
     pipeline = grid.best_estimator_
     print(f"Best hyperparameters (with Surgery): {grid.best_params_}")
@@ -79,7 +82,12 @@ def main():
 
     weighted_f1, macro_f1, balanced_acc = evaluate_model(y_test, predictions)
 
-    # VISUALIZATION AFTER BALANCING
+    # VISUALIZATION OF HYPOTHETICAL BALANCING (illustrative only - see note below)
+    # NOTE: this plot is illustrative only - it shows what the class distribution would look
+    # like under random oversampling (RandomOverSampler), purely to visualize the imbalance
+    # problem. The actual pipeline does NOT apply any oversampling/undersampling; class
+    # imbalance is handled solely via class_weight='balanced' in LinearSVC, applied directly
+    # to the original, unmodified training distribution.
     from imblearn.over_sampling import RandomOverSampler as ROS
     import numpy as np
 
@@ -89,7 +97,8 @@ def main():
     balanced_df = pd.DataFrame({'medical_specialty': y_balanced_viz})
     plot_class_distribution(
         balanced_df,
-        title=f'Class Distribution AFTER Balancing (RandomOverSampler)\nAll classes equalized to majority class size',
+        title=f'Hypothetical Class Distribution if Random Oversampling Were Applied\n'
+              f'(Illustrative only - actual pipeline uses class_weight="balanced" instead)',
         filename='class_distribution_after_balancing'
     )
 
@@ -107,6 +116,31 @@ def main():
     print("\n=== FINAL TEST SET RESULTS ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
+
+    # 9b. ADDITIONAL COMPARISON: RandomOverSampler instead of class_weight='balanced'
+    # (quick sanity check - for a linear model, oversampling and class-weighting are
+    # mathematically very similar; this tests whether the choice of imbalance-handling
+    # strategy itself matters, independent of Surgery removal or hyperparameter tuning)
+    from imblearn.pipeline import Pipeline as ImbPipeline
+    from imblearn.over_sampling import RandomOverSampler
+
+    ros_pipeline = ImbPipeline([
+        ('tfidf', TfidfVectorizer(max_features=5000)),
+        ('ros', RandomOverSampler(random_state=42)),
+        ('clf', LinearSVC(random_state=42, max_iter=5000))  # no class_weight - ROS handles imbalance instead
+    ])
+
+    grid_ros = GridSearchCV(ros_pipeline, TFIDF_SVC_PARAM_GRID, cv=3, scoring='f1_macro')
+    grid_ros.fit(X_train, y_train)
+    pipeline_ros = grid_ros.best_estimator_
+    print(f"Best hyperparameters (RandomOverSampler): {grid_ros.best_params_}")
+
+    predictions_ros = pipeline_ros.predict(X_test)
+    print("\n--- TF-IDF + LinearSVC (RandomOverSampler, no class_weight) ---")
+    ros_w_f1, ros_macro_f1, ros_bal_acc = evaluate_model(y_test, predictions_ros)
+    all_results['TF-IDF + LinearSVC (RandomOverSampler)'] = {
+        'weighted_f1': ros_w_f1, 'macro_f1': ros_macro_f1, 'balanced_accuracy': ros_bal_acc
+    }
 
     # 10. SETFIT - fair ablation: both variants trained from scratch, same num_iterations
     from src.setfit_classifier import (
@@ -136,6 +170,7 @@ def main():
     setfit_f1_raw, setfit_macro_f1_raw, setfit_balanced_acc_raw = evaluate_setfit(setfit_model_raw, test_ds_raw, le_raw)
     all_results['SetFit (raw)'] = {'weighted_f1': setfit_f1_raw, 'macro_f1': setfit_macro_f1_raw,
                                    'balanced_accuracy': setfit_balanced_acc_raw}
+
     # 11. SEMANTIC SEARCH - FAISS (comparison of embedding models)
     from src.searcher import MedicalSearcher, evaluate_search
 
@@ -152,7 +187,7 @@ def main():
     for model_name in embedding_models:
         for text_column in text_columns:
             label = f"{model_name} [{text_column}]"
-            print(f"\n--- Model: {model_name} | Tekst: {text_column} ---")
+            print(f"\n--- Model: {model_name} | Text: {text_column} ---")
             searcher = MedicalSearcher(model_name=model_name)
 
             index_path = f"data/faiss_index_{model_name.replace('/', '_')}_{text_column}"
@@ -177,6 +212,13 @@ def main():
     try:
         import requests
         requests.get("http://localhost:11434", timeout=2)
+        ollama_available = True
+    except Exception as e:
+        print(f"\n=== Ollama is not available: {e} ===")
+        print("Start 'ollama serve' first and then run again.")
+        ollama_available = False
+
+    if ollama_available:
         from src.extractor import run_extraction_pipeline
 
         if not os.environ.get("GROQ_API_KEY"):
@@ -212,23 +254,14 @@ def main():
             })
             print(judge_comparison)
 
-            extraction_results = extraction_results_panel  # keep the richest result set, in case it's needed later
-    except Exception as e:
-        print(f"\n=== Ollama is not available: {e} ===")
-        print("Start 'ollama serve' first and then run again.")
-
-
-
-
     print("\n=== FINAL COMPARISON TABLE ===")
     results_df = pd.DataFrame(all_results).T
     print(results_df)
+
     # 13. SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS + GridSearchCV TUNING
     # (macro-F1 is the key metric, since Surgery's dominance specifically distorts
     # macro-averaged performance; these tuned, Surgery-removed models become the
     # final system used in the Streamlit demo)
-    from sklearn.model_selection import GridSearchCV
-
     print("\n=== SURGERY CLASS REMOVAL - COMPARATIVE ANALYSIS ===")
 
     df_no_surgery = df[df['medical_specialty'] != 'Surgery'].reset_index(drop=True)
@@ -247,12 +280,10 @@ def main():
 
     base_pipeline_ns = SklearnPipeline([
         ('tfidf', TfidfVectorizer(max_features=5000)),
-        ('clf', LinearSVC(class_weight='balanced', random_state=42))
+        ('clf', LinearSVC(class_weight='balanced', random_state=42, max_iter=5000))
     ])
 
-    # GridSearchCV over the full pipeline, scored on macro-F1 since that's our key metric
-    param_grid = {'clf__C': [0.1, 1, 10]}
-    grid_ns = GridSearchCV(base_pipeline_ns, param_grid, cv=3, scoring='f1_macro')
+    grid_ns = GridSearchCV(base_pipeline_ns, TFIDF_SVC_PARAM_GRID, cv=3, scoring='f1_macro')
     grid_ns.fit(X_train_ns, y_train_ns)
     pipeline_ns = grid_ns.best_estimator_
     print(f"Best hyperparameters (no Surgery): {grid_ns.best_params_}")
