@@ -1,4 +1,4 @@
 {
-  "normalize_embeddings": false,
-  "labels": null
+  "labels": null,
+  "normalize_embeddings": false
 }

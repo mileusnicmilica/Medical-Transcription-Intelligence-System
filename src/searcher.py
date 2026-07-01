@@ -21,7 +21,7 @@ class MedicalSearcher:
         Generates embeddings and builds FAISS index.
         """
         self.df = df.reset_index(drop=True)
-        self.text_column = text_column  # NOVO
+        self.text_column = text_column
         print("Generating embeddings...")
         texts = df[text_column].tolist()
         embeddings = self.model.encode(texts, show_progress_bar=True, batch_size=32)

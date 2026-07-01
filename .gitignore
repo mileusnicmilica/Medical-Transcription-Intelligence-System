@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .idea/
 
-# artifacts
+# Trained models / artifacts
 data/*.csv
 data/*.png
+!data/cleaned_data_cache.csv
