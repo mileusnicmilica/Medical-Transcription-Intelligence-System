@@ -7,4 +7,6 @@ __pycache__/
 # Trained models / artifacts
 data/*.csv
 data/*.png
+notebook/*.png
+notebook/*.jpg
 !data/cleaned_data_cache.csv
