@@ -157,7 +157,7 @@ Dataset is downloaded automatically via `kagglehub`. Cleaning: remove NaN transc
 
 `MedicalPreprocessor` wraps SpaCy (`en_core_web_sm`) to perform lowercasing, tokenization, lemmatization, and removal of stop words, punctuation, whitespace tokens, and numeric tokens. The `parser` and `ner` components are disabled for speed. Results are cached to `data/cleaned_data_cache.csv`.
 
-### 3. Classification — TF-IDF + LinearSVC
+### 3. Classification - TF-IDF + LinearSVC
 
 **Files**: `src/classifiers.py`, `main.py`
 
@@ -165,19 +165,19 @@ Dataset is downloaded automatically via `kagglehub`. Cleaning: remove NaN transc
 
 `RandomOverSampler` also tested as alternative balancing strategy; `class_weight='balanced'` outperformed it across all metrics. SMOTE implemented in `src/balancing.py` but excluded from final pipeline due to prohibitive runtime on sparse high-dimensional TF-IDF features.
 
-### 4. Few-Shot Classification — SetFit
+### 4. Few-Shot Classification - SetFit
 
 **File**: `src/setfit_classifier.py`
 
 SetFit fine-tunes `paraphrase-MiniLM-L6-v2` via contrastive learning on 16 samples per class, then trains a classification head on the resulting embeddings. Evaluated in two ablation variants: lemmatized vs. raw text. Both variants trained from scratch with identical configuration (`num_iterations=1`, `num_epochs=1`, `batch_size=16`).
 
-### 5. Semantic Search — FAISS
+### 5. Semantic Search - FAISS
 
 **File**: `src/searcher.py`
 
 `MedicalSearcher` generates L2-normalized sentence embeddings and indexes them with `IndexFlatIP` (exact cosine similarity search). Four configurations evaluated: 2 models × 2 text variants. Evaluated with Precision@K (K∈{1,3,5}) on 100 sampled queries.
 
-### 6. Medical Entity Extraction — LLM via Ollama
+### 6. Medical Entity Extraction - LLM via Ollama
 
 **File**: `src/extractor.py`
 
